@@ -224,6 +224,11 @@ async function handleRequest(request, env) {
         result.provider = "intercepted";
       }
 
+      // Log translation for admin dashboard
+      await env.DB.prepare(
+        "INSERT INTO translation_log (user_id, original_text, translated_text, source_lang, target_lang, provider, is_beta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(userId, text, result.text, src, tgt, result.provider, isBeta ? 1 : 0, Date.now()).run();
+
       return cors({
         text: result.text,
         provider: result.provider,
@@ -258,6 +263,24 @@ async function handleRequest(request, env) {
     if (url.pathname === "/admin/intercepts" && request.method === "GET") {
       const result = await adminListIntercepts(env);
       return cors({ intercepts: result });
+    }
+
+    // ── Admin: recent translations ──
+    if (url.pathname === "/admin/recent" && request.method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const rows = await env.DB.prepare(
+        "SELECT user_id, original_text, translated_text, source_lang, target_lang, provider, is_beta, created_at FROM translation_log ORDER BY created_at DESC LIMIT ?"
+      ).bind(Math.min(limit, 200)).all();
+      return cors({ translations: rows.results });
+    }
+
+    // ── Admin: active users list ──
+    if (url.pathname === "/admin/users" && request.method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const rows = await env.DB.prepare(
+        "SELECT user_id, MAX(created_at) as last_seen, COUNT(*) as total_translations, MAX(is_beta) as is_beta FROM translation_log GROUP BY user_id ORDER BY last_seen DESC LIMIT ?"
+      ).bind(Math.min(limit, 200)).all();
+      return cors({ users: rows.results });
     }
   }
 
