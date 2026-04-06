@@ -20,3 +20,4 @@ DEEPL_KEY = ""  # set via wrangler secret put
 MYMEMORY_ENABLED = "true"
 DEEPL_ENABLED = "true"
 BETA_MAX_USES = "10"
+JOKE_MODE = "false"  # set to "true" on April 1 for fun

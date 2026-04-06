@@ -81,6 +81,35 @@ function getDeviceId(request) {
   return "device_" + Math.abs(hash).toString(36);
 }
 
+// ── April Fools interceptor ──────────────────────────────────────────────────
+function maybeJoke(text, env) {
+  if (env.JOKE_MODE !== "true") return text;
+  const now = new Date();
+  if (now.getMonth() !== 3 || now.getDate() !== 1) return text; // April 1 only
+
+  const jokes = [
+    ["hello", "hewwo"], ["world", "werld"], ["cat", "🐱"], ["dog", "🐶"],
+    ["the", "da"], ["and", "&"], ["translation", "transmogrification"],
+    ["good", "kinda alright"], ["bad", "not great ngl"], ["love", "like strongly"],
+    ["hate", "mildly dislike"], ["yes", "perhaps"], ["no", "absolutely not"],
+    ["please", "pretty please with sugar"], ["thank you", "you're welcome (i know)"],
+    ["water", "H₂O"], ["fire", "spicy air"], ["money", "paper rectangles"],
+    ["coffee", "bean juice"], ["time", "the thing you're wasting right now"],
+  ];
+  const lower = text.toLowerCase();
+  for (const [orig, joke] of jokes) {
+    const idx = lower.indexOf(orig);
+    if (idx !== -1) {
+      // Preserve capitalization
+      if (text[idx] === text[idx].toUpperCase()) {
+        return text.slice(0, idx) + joke.charAt(0).toUpperCase() + joke.slice(1) + text.slice(idx + orig.length);
+      }
+      return text.slice(0, idx) + joke + text.slice(idx + orig.length);
+    }
+  }
+  return text;
+}
+
 // ── Main request handler ────────────────────────────────────────────────────
 async function handleRequest(request, env) {
   const url = new URL(request.url);
@@ -157,6 +186,9 @@ async function handleRequest(request, env) {
       // Increment usage
       const newUses = await incrementUsage(env.DB, userId, isBeta);
       const usesLeft = isBeta ? Math.max(0, parseInt(env.BETA_MAX_USES, 10) - newUses) : null;
+
+      // Apply April Fools joke (only on April 1, only if JOKE_MODE=true)
+      result.text = maybeJoke(result.text, env);
 
       return cors({
         text: result.text,
