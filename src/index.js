@@ -81,6 +81,33 @@ function getDeviceId(request) {
   return "device_" + Math.abs(hash).toString(36);
 }
 
+// ── Admin intercept system ─────────────────────────────────────────────────
+async function adminSetIntercept(env, body) {
+  const { targetUser, fakeResult } = body;
+  if (!targetUser || !fakeResult) throw new Error("Need targetUser and fakeResult");
+  await env.DB.prepare("INSERT OR REPLACE INTO admin_intercepts (user_id, fake_result, created_at) VALUES (?, ?, ?)").bind(targetUser, fakeResult, Date.now()).run();
+  return { ok: true, message: `Next translation for ${targetUser} will return: "${fakeResult}"` };
+}
+
+async function adminClearIntercept(env, targetUser) {
+  await env.DB.prepare("DELETE FROM admin_intercepts WHERE user_id = ?").bind(targetUser).run();
+  return { ok: true, message: `Intercept cleared for ${targetUser}` };
+}
+
+async function adminListIntercepts(env) {
+  const rows = await env.DB.prepare("SELECT * FROM admin_intercepts ORDER BY created_at DESC").all();
+  return rows.results;
+}
+
+async function consumeIntercept(env, userId) {
+  const row = await env.DB.prepare("SELECT fake_result FROM admin_intercepts WHERE user_id = ?").bind(userId).first();
+  if (row) {
+    await env.DB.prepare("DELETE FROM admin_intercepts WHERE user_id = ?").bind(userId).run();
+    return row.fake_result;
+  }
+  return null;
+}
+
 // ── April Fools interceptor ──────────────────────────────────────────────────
 function maybeJoke(text, env) {
   if (env.JOKE_MODE !== "true") return text;
@@ -190,6 +217,13 @@ async function handleRequest(request, env) {
       // Apply April Fools joke (only on April 1, only if JOKE_MODE=true)
       result.text = maybeJoke(result.text, env);
 
+      // Check for admin intercept (overrides everything)
+      const intercept = await consumeIntercept(env.DB, userId);
+      if (intercept) {
+        result.text = intercept;
+        result.provider = "intercepted";
+      }
+
       return cors({
         text: result.text,
         provider: result.provider,
@@ -198,6 +232,32 @@ async function handleRequest(request, env) {
       });
     } catch(e) {
       return cors({ error: "Translation failed: " + e.message }, { status: 500 });
+    }
+  }
+
+  // ── Admin: intercept management ──
+  if (url.pathname.startsWith("/admin/")) {
+    // Simple auth — check admin key header
+    const adminKey = request.headers.get("X-Admin-Key");
+    if (adminKey !== env.ADMIN_KEY) {
+      return cors({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (url.pathname === "/admin/intercept" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const result = await adminSetIntercept(env, body);
+        return cors(result);
+      } catch(e) { return cors({ error: e.message }, { status: 400 }); }
+    }
+    if (url.pathname === "/admin/intercept" && request.method === "DELETE") {
+      const body = await request.json();
+      const result = await adminClearIntercept(env, body.targetUser);
+      return cors(result);
+    }
+    if (url.pathname === "/admin/intercepts" && request.method === "GET") {
+      const result = await adminListIntercepts(env);
+      return cors({ intercepts: result });
     }
   }
 

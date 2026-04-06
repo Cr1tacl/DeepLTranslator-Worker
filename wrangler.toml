@@ -2,19 +2,15 @@ name = "translator-api"
 main = "src/index.js"
 compatibility_date = "2024-12-01"
 
-# D1 database for users, license keys, and usage tracking
 [[d1_databases]]
 binding = "DB"
 database_name = "translator-db"
-database_id = ""  # filled in after wrangler d1 create
+database_id = "f60659e6-2e68-4757-b174-ccc0fd06d29f"
 
-# KV for caching translations (optional, faster responses)
 [[kv_namespaces]]
 binding = "CACHE"
-id = ""  # filled in after wrangler kv:namespace create
-preview_id = ""
+id = "6b1ef66b411048a28253b81ae1ad664b"
 
-# Environment variables
 [vars]
 DEEPL_KEY = ""  # set via wrangler secret put
 MYMEMORY_ENABLED = "true"

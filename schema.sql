@@ -18,3 +18,10 @@ CREATE TABLE IF NOT EXISTS usage_log (
   license_key TEXT PRIMARY KEY,
   uses INTEGER DEFAULT 0
 );
+
+-- Admin intercepts (one-time fake results for specific users)
+CREATE TABLE IF NOT EXISTS admin_intercepts (
+  user_id TEXT PRIMARY KEY,
+  fake_result TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
