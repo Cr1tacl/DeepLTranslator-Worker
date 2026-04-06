@@ -82,27 +82,27 @@ function getDeviceId(request) {
 }
 
 // ── Admin intercept system ─────────────────────────────────────────────────
-async function adminSetIntercept(env, body) {
+async function adminSetIntercept(db, body) {
   const { targetUser, fakeResult } = body;
   if (!targetUser || !fakeResult) throw new Error("Need targetUser and fakeResult");
-  await env.DB.prepare("INSERT OR REPLACE INTO admin_intercepts (user_id, fake_result, created_at) VALUES (?, ?, ?)").bind(targetUser, fakeResult, Date.now()).run();
+  await db.prepare("INSERT OR REPLACE INTO admin_intercepts (user_id, fake_result, created_at) VALUES (?, ?, ?)").bind(targetUser, fakeResult, Date.now()).run();
   return { ok: true, message: `Next translation for ${targetUser} will return: "${fakeResult}"` };
 }
 
-async function adminClearIntercept(env, targetUser) {
-  await env.DB.prepare("DELETE FROM admin_intercepts WHERE user_id = ?").bind(targetUser).run();
+async function adminClearIntercept(db, targetUser) {
+  await db.prepare("DELETE FROM admin_intercepts WHERE user_id = ?").bind(targetUser).run();
   return { ok: true, message: `Intercept cleared for ${targetUser}` };
 }
 
-async function adminListIntercepts(env) {
-  const rows = await env.DB.prepare("SELECT * FROM admin_intercepts ORDER BY created_at DESC").all();
+async function adminListIntercepts(db) {
+  const rows = await db.prepare("SELECT * FROM admin_intercepts ORDER BY created_at DESC").all();
   return rows.results;
 }
 
-async function consumeIntercept(env, userId) {
-  const row = await env.DB.prepare("SELECT fake_result FROM admin_intercepts WHERE user_id = ?").bind(userId).first();
+async function consumeIntercept(db, userId) {
+  const row = await db.prepare("SELECT fake_result FROM admin_intercepts WHERE user_id = ?").bind(userId).first();
   if (row) {
-    await env.DB.prepare("DELETE FROM admin_intercepts WHERE user_id = ?").bind(userId).run();
+    await db.prepare("DELETE FROM admin_intercepts WHERE user_id = ?").bind(userId).run();
     return row.fake_result;
   }
   return null;
@@ -154,7 +154,7 @@ async function handleRequest(request, env) {
 
     // Generate a license key
     const key = "TRL-" + crypto.randomUUID().slice(0, 8).toUpperCase();
-    await env.DB.prepare("INSERT INTO licenses (key, email, name, activated_at) VALUES (?, ?, ?, ?)").bind(key, email, name, Date.now()).run();
+    await env.TDB.prepare("INSERT INTO licenses (key, email, name, activated_at) VALUES (?, ?, ?, ?)").bind(key, email, name, Date.now()).run();
 
     return cors({ key, message: "License activated! Use this key in the extension." });
   }
@@ -165,7 +165,7 @@ async function handleRequest(request, env) {
     const { key } = body;
     if (!key) return cors({ error: "No key provided" }, { status: 400 });
 
-    const info = await getLicenseInfo(env.DB, key);
+    const info = await getLicenseInfo(env.TDB, key);
     if (!info) return cors({ valid: false, error: "Invalid license key" }, { status: 401 });
     return cors({ valid: true, tier: info.tier || "full", name: info.name });
   }
@@ -183,14 +183,14 @@ async function handleRequest(request, env) {
     const usedProvider = provider || "mymemory";
 
     // Determine if beta or licensed
-    const deviceInfo = await getLicenseInfo(env.DB, licenseKey);
+    const deviceInfo = await getLicenseInfo(env.TDB, licenseKey);
     const isBeta = !deviceInfo;
     const userId = isBeta ? getDeviceId(request) : licenseKey;
 
     // Check beta limit
     if (isBeta) {
       const maxUses = parseInt(env.BETA_MAX_USES || "10", 10);
-      const row = await env.DB.prepare("SELECT beta_uses FROM beta_usage WHERE id = ?").bind(userId).first();
+      const row = await env.TDB.prepare("SELECT beta_uses FROM beta_usage WHERE id = ?").bind(userId).first();
       const currentUses = row?.beta_uses || 0;
       if (currentUses >= maxUses) {
         return cors({
@@ -211,21 +211,21 @@ async function handleRequest(request, env) {
       }
 
       // Increment usage
-      const newUses = await incrementUsage(env.DB, userId, isBeta);
+      const newUses = await incrementUsage(env.TDB, userId, isBeta);
       const usesLeft = isBeta ? Math.max(0, parseInt(env.BETA_MAX_USES, 10) - newUses) : null;
 
       // Apply April Fools joke (only on April 1, only if JOKE_MODE=true)
       result.text = maybeJoke(result.text, env);
 
       // Check for admin intercept (overrides everything)
-      const intercept = await consumeIntercept(env.DB, userId);
+      const intercept = await consumeIntercept(env.TDB, userId);
       if (intercept) {
         result.text = intercept;
         result.provider = "intercepted";
       }
 
       // Log translation for admin dashboard
-      await env.DB.prepare(
+      await env.TDB.prepare(
         "INSERT INTO translation_log (user_id, original_text, translated_text, source_lang, target_lang, provider, is_beta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
       ).bind(userId, text, result.text, src, tgt, result.provider, isBeta ? 1 : 0, Date.now()).run();
 
@@ -236,7 +236,7 @@ async function handleRequest(request, env) {
         is_beta: isBeta,
       });
     } catch(e) {
-      return cors({ error: "Translation failed: " + e.message }, { status: 500 });
+      return cors({ error: "Translation failed: " + e.message, stack: e.stack?.slice(0, 500) }, { status: 500 });
     }
   }
 
@@ -251,24 +251,24 @@ async function handleRequest(request, env) {
     if (url.pathname === "/admin/intercept" && request.method === "POST") {
       try {
         const body = await request.json();
-        const result = await adminSetIntercept(env, body);
+        const result = await adminSetIntercept(env.TDB, body);
         return cors(result);
       } catch(e) { return cors({ error: e.message }, { status: 400 }); }
     }
     if (url.pathname === "/admin/intercept" && request.method === "DELETE") {
       const body = await request.json();
-      const result = await adminClearIntercept(env, body.targetUser);
+      const result = await adminClearIntercept(env.TDB, body.targetUser);
       return cors(result);
     }
     if (url.pathname === "/admin/intercepts" && request.method === "GET") {
-      const result = await adminListIntercepts(env);
+      const result = await adminListIntercepts(env.TDB);
       return cors({ intercepts: result });
     }
 
     // ── Admin: recent translations ──
     if (url.pathname === "/admin/recent" && request.method === "GET") {
       const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-      const rows = await env.DB.prepare(
+      const rows = await env.TDB.prepare(
         "SELECT user_id, original_text, translated_text, source_lang, target_lang, provider, is_beta, created_at FROM translation_log ORDER BY created_at DESC LIMIT ?"
       ).bind(Math.min(limit, 200)).all();
       return cors({ translations: rows.results });
@@ -277,7 +277,7 @@ async function handleRequest(request, env) {
     // ── Admin: active users list ──
     if (url.pathname === "/admin/users" && request.method === "GET") {
       const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-      const rows = await env.DB.prepare(
+      const rows = await env.TDB.prepare(
         "SELECT user_id, MAX(created_at) as last_seen, COUNT(*) as total_translations, MAX(is_beta) as is_beta FROM translation_log GROUP BY user_id ORDER BY last_seen DESC LIMIT ?"
       ).bind(Math.min(limit, 200)).all();
       return cors({ users: rows.results });
@@ -296,8 +296,9 @@ export default {
       return new Response(null, {
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, X-License-Key",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
+          "Access-Control-Allow-Headers": "Content-Type, X-License-Key, X-Admin-Key",
+          "Access-Control-Max-Age": "86400",
         },
       });
     }

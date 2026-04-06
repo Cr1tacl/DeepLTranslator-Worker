@@ -3,7 +3,7 @@ main = "src/index.js"
 compatibility_date = "2024-12-01"
 
 [[d1_databases]]
-binding = "DB"
+binding = "TDB"
 database_name = "translator-db"
 database_id = "f60659e6-2e68-4757-b174-ccc0fd06d29f"
 
